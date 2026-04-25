@@ -1,0 +1,42 @@
+# Google Cloud Build - otomatik build ve Cloud Run deploy
+# Bu dosya GitHub repo'ya baglaninca otomatik tetiklenir
+
+steps:
+  # Docker image build et
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/multiproxy:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/multiproxy:latest'
+      - '.'
+
+  # Image'i push et
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/multiproxy:$COMMIT_SHA'
+
+  # Cloud Run'a deploy et
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'multiproxy'
+      - '--image=gcr.io/$PROJECT_ID/multiproxy:$COMMIT_SHA'
+      - '--platform=managed'
+      - '--region=us-central1'
+      - '--port=8080'
+      - '--min-instances=1'
+      - '--max-instances=5'
+      - '--memory=256Mi'
+      - '--timeout=3600'
+      - '--allow-unauthenticated'
+      # VPS sunucularini buraya ekle (veya Cloud Run Console'dan)
+      - '--set-env-vars=VPS_DE=89.169.53.227,PORT_DE=443,VPS_FR=194.33.34.66,PORT_FR=443'
+
+images:
+  - 'gcr.io/$PROJECT_ID/multiproxy:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/multiproxy:latest'
