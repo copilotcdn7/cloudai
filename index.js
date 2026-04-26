@@ -10,7 +10,6 @@ const SERVERS = {
 
 const PORT = process.env.PORT || 8080;
 
-// Her aktif sunucu icin baglanti olustur
 const proxies = {};
 for (const [path, cfg] of Object.entries(SERVERS)) {
     if (!cfg.target) continue;
@@ -23,10 +22,21 @@ for (const [path, cfg] of Object.entries(SERVERS)) {
         changeOrigin: true,
         proxyTimeout: 0,
         timeout: 0,
+        headers: {
+            'Host': cfg.target   // Backend kendi IP'sini görür
+        }
     });
 
-    proxies[path].on('error', (err) => {
-        console.error(`[${path}] Baglanti hatasi:`, err.message);
+    proxies[path].on('error', (err, req, res) => {
+        console.error(`[${path}] Hata:`, err.message);
+        if (res && res.writeHead) {
+            res.writeHead(502);
+            res.end('Baglanti hatasi');
+        }
+    });
+
+    proxies[path].on('proxyReqWs', (proxyReq, req) => {
+        proxyReq.setHeader('Host', cfg.target);  // WS icin de Host duzenle
     });
 
     console.log(`Aktif: ${path} → ${cfg.target}:${cfg.port}`);
@@ -54,11 +64,11 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    req.url = req.url.substring(segment.length) || '/';
+    req.url = '/';
     proxy.web(req, res);
 });
 
-// WebSocket destegi
+// WebSocket
 server.on('upgrade', (req, socket, head) => {
     const segment = '/' + (req.url.split('/')[1] || '');
     const proxy = proxies[segment];
@@ -68,7 +78,8 @@ server.on('upgrade', (req, socket, head) => {
         return;
     }
 
-    req.url = req.url.substring(segment.length) || '/';
+    req.url = '/';
+    req.headers['host'] = SERVERS[segment].target;  // Host header'i backend IP yap
     proxy.ws(req, socket, head);
 });
 
