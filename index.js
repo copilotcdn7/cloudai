@@ -1,5 +1,5 @@
-const http = require('http');
-const httpProxy = require('http-proxy');
+const express = require('express');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 
 // ─── SUNUCU LISTESI ──────────────────────────────────────────────
 const SERVERS = {
@@ -9,82 +9,50 @@ const SERVERS = {
 // ─────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 8080;
+const app = express();
 
-const proxies = {};
+// Ana sayfa - bad request vermemek icin
+app.get('/', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<html><body><h2>OK</h2></body></html>');
+});
+
+// Her sunucu icin proxy tanimla
 for (const [path, cfg] of Object.entries(SERVERS)) {
     if (!cfg.target) continue;
 
-    const url = `https://${cfg.target}:${cfg.port}`;
-    proxies[path] = httpProxy.createProxyServer({
-        target: url,
-        ws: true,
-        secure: false,
+    const targetUrl = `https://${cfg.target}:${cfg.port}`;
+
+    app.use(path, createProxyMiddleware({
+        target: targetUrl,
         changeOrigin: true,
-        proxyTimeout: 0,
-        timeout: 0,
-        headers: {
-            'Host': cfg.target   // Backend kendi IP'sini görür
+        ws: true,
+        secure: true,
+        pathRewrite: { [`^${path}`]: '' },
+        on: {
+            proxyReq: (proxyReq) => {
+                proxyReq.setHeader('Host', cfg.target);
+            },
+            proxyReqWs: (proxyReq) => {
+                proxyReq.setHeader('Host', cfg.target);
+            },
+            error: (err, req, res) => {
+                console.error(`[${path}] Hata:`, err.message);
+                if (res && res.writeHead) {
+                    res.writeHead(502);
+                    res.end('Baglanti hatasi');
+                }
+            }
         }
-    });
+    }));
 
-    proxies[path].on('error', (err, req, res) => {
-        console.error(`[${path}] Hata:`, err.message);
-        if (res && res.writeHead) {
-            res.writeHead(502);
-            res.end('Baglanti hatasi');
-        }
-    });
-
-    proxies[path].on('proxyReqWs', (proxyReq, req) => {
-        proxyReq.setHeader('Host', cfg.target);  // WS icin de Host duzenle
-    });
-
-    console.log(`Aktif: ${path} → ${cfg.target}:${cfg.port}`);
+    console.log(`Aktif: ${path} → ${targetUrl}`);
 }
 
-// HTTP sunucusu
-const server = http.createServer((req, res) => {
-    const segment = '/' + (req.url.split('/')[1] || '');
-    const proxy = proxies[segment];
-
-    if (!proxy) {
-        if (req.url === '/' || req.url === '') {
-            const active = Object.keys(proxies);
-            res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-            res.end([
-                'Cloud Run Multi-Server',
-                '======================',
-                `Aktif sunucu: ${active.length}`,
-                ...active.map(p => `  ${p} → ${SERVERS[p].target}:${SERVERS[p].port}`),
-            ].join('\n'));
-            return;
-        }
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end(`Bulunamadi: ${segment} | Aktif: ${Object.keys(proxies).join(', ')}`);
-        return;
-    }
-
-    req.url = '/';
-    proxy.web(req, res);
-});
-
-// WebSocket
-server.on('upgrade', (req, socket, head) => {
-    const segment = '/' + (req.url.split('/')[1] || '');
-    const proxy = proxies[segment];
-
-    if (!proxy) {
-        socket.destroy();
-        return;
-    }
-
-    req.url = '/';
-    req.headers['host'] = SERVERS[segment].target;  // Host header'i backend IP yap
-    proxy.ws(req, socket, head);
+const server = app.listen(PORT, () => {
+    console.log(`\n=== Sunucu calisiyor (port: ${PORT}) ===`);
+    console.log(`Aktif sunucu sayisi: ${Object.keys(SERVERS).length}`);
 });
 
 server.setTimeout(0);
-server.listen(PORT, () => {
-    console.log(`\n=== Sunucu calisiyor (port: ${PORT}) ===`);
-    console.log(`Aktif sunucu sayisi: ${Object.keys(proxies).length}`);
-});
+
