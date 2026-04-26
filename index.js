@@ -10,10 +10,14 @@ app.use('/', createProxyMiddleware({
     target: TARGET,
     changeOrigin: true,
     ws: true,
-    secure: true,
+    secure: false,
     on: {
         error: (err, req, res) => {
             console.error('Hata:', err.message);
+            if (res && typeof res.writeHead === 'function') {
+                res.writeHead(400);
+                res.end('Bad Request');
+            }
         }
     }
 }));
